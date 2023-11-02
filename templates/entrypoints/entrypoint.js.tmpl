@@ -1,0 +1,62 @@
+const http = require("http");
+const func = require("./{{.Main}}");
+
+const parsers = {
+	"text/plain": async (response) => await response.text(),
+	"application/json": async (response) => await response.json()
+};
+
+const server = http.createServer(async (req, res) =>
+{
+	// Health check endpoint
+	if (req.url === '/health')
+	{
+		res.writeHead(200, { 'Content-Type': 'text/plain' });
+		return res.end('Healthy');
+	}
+
+	const body = await new Promise((resolve, reject) =>
+	{
+		let data = '';
+		req.on('data', chunk =>
+		{
+			data += chunk;
+		});
+		req.on('end', () => resolve(data));
+		req.on('error', reject);
+	});
+
+	const url = req.url;
+	const fetchOptions = {
+		method: req.method,
+		headers: req.headers,
+		body: body.length > 0 ? body : undefined
+	};
+
+	try
+	{
+		const r = new Request(new URL(url, `https://${req.headers.host}`), fetchOptions);
+
+		const response = await func(r, process.env);
+		res.writeHead(response.status, { ...Object.fromEntries(response.headers) });
+
+		const contentType = response.headers.get("content-type");
+		let result;
+
+		if (parsers[contentType])
+		{
+			result = await parsers[contentType](response);
+			res.end(JSON.stringify(result));
+		} else
+		{
+			result = await parsers["text/plain"](response);
+			res.end(result);
+		}
+	} catch (err)
+	{
+		res.writeHead(500);
+		res.end(err.message);
+	}
+});
+
+server.listen(8080);
